@@ -8,7 +8,7 @@ from .stop_criteria import StopCriteria
 def autoregressive_generate(
     model: torch.nn.Module,
     input_ids: torch.Tensor,
-    max_new_tokens: int = 20,
+    max_new_tokens: int = 50,
     eos_token_id: Optional[int] = None,
     sampler_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     use_cache: bool = False,
@@ -17,6 +17,12 @@ def autoregressive_generate(
     Generate tokens autoregressively.
     input_ids shape: (batch_size, seq_len)
     """
+    if input_ids.dim() != 2 or input_ids.size(1) == 0:
+        raise ValueError("input_ids must have shape (batch_size, nonzero_seq_len)")
+    if max_new_tokens < 0:
+        raise ValueError("max_new_tokens must be non-negative")
+
+    model.eval()
     generated = input_ids.clone()
     batch_size = generated.size(0)
     stop_criteria = StopCriteria(max_length=generated.size(1) + max_new_tokens, eos_token_id=eos_token_id)

@@ -111,13 +111,23 @@ class MultiHeadAttention(nn.Module):
             cos, sin = self.rotary(q, seq_len=seq_len, offset=position_offset)
             q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
+        past_len = 0
+        if kv_cache is not None and layer_idx is not None:
+            past_len = kv_cache.get_seq_length(layer_idx)
+
         # 3. Update KV cache if provided
         if kv_cache is not None and layer_idx is not None:
             k, v = kv_cache.update(layer_idx, k, v)
 
         # 4. Prepare causal mask if needed
-        if mask is None and use_causal_mask and seq_len > 1:
-            mask = create_causal_mask(seq_len=seq_len, device=x.device, dtype=x.dtype)
+        if mask is None and use_causal_mask and (seq_len > 1 or past_len > 0):
+            mask = create_causal_mask(
+                seq_len=seq_len,
+                device=x.device,
+                dtype=x.dtype,
+                key_len=k.size(-2),
+                past_len=past_len,
+            )
 
         # 5. Scaled dot-product attention
         attn_out, _ = scaled_dot_product_attention(

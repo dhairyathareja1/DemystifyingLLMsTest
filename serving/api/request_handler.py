@@ -61,6 +61,9 @@ class RequestHandler:
         else:
             raise RuntimeError("No inference engine is configured")
 
+        stop_token_ids = getattr(getattr(self.engine, "inference_config", None), "stop_token_ids", [])
+        finish_reason = "stop" if generated_tokens and generated_tokens[-1] in stop_token_ids else "length"
+
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
             "object": "text_completion",
@@ -71,7 +74,7 @@ class RequestHandler:
                 {
                     "text": response_text,
                     "index": 0,
-                    "finish_reason": "length"
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
