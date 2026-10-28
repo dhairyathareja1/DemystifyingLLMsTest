@@ -9,6 +9,8 @@ import torch.nn as nn
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
 from utils.logging_utils import get_logger
+from inference.sampling.sampler import Sampler
+from inference.generation.kv_cache import KVCache
 
 logger = get_logger("inference_engine")
 
@@ -22,14 +24,20 @@ class FullTransformerModel(nn.Module):
         from model.embeddings import EmbeddingLayer
         from model.blocks import BlockStack
         from model.heads import LMHead
+        from model.heads.weight_tying import tie_weights
 
         self.embeddings = EmbeddingLayer(config=config)
-        self.blocks = BlockStack()
+        self.blocks = BlockStack(config=config)
         self.lm_head = LMHead(config=config)
+        if getattr(config, "tie_weights", False):
+            tie_weights(self.lm_head, self.embeddings.token_embedding)
+        self.num_layers = self.blocks.n_layers
 
     def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = self.embeddings(input_ids)
-        h = self.blocks(h, **kwargs)
+        kv_cache = kwargs.get("kv_cache")
+        offset = kv_cache.get_seq_length() if kv_cache is not None else 0
+        h = self.embeddings(input_ids, offset=offset)
+        h = self.blocks(h, position_offset=offset, **kwargs)
         logits = self.lm_head(h)
         return logits
 
@@ -68,8 +76,11 @@ class InferenceEngine:
         """
         Internal lifecycle helper to prepare model state before inference execution.
         """
-        if self.model is not None and hasattr(self.model, "train"):
-            self.model.train()
+        if self.model is not None:
+            if hasattr(self.model, "to"):
+                self.model.to(self.device)
+            if hasattr(self.model, "eval"):
+                self.model.eval()
 
     def generate_tokens(
         self,
@@ -90,28 +101,36 @@ class InferenceEngine:
 
         temp = temperature if temperature is not None else self.inference_config.temperature
         tokens = list(prompt_tokens)
+        if not tokens:
+            raise ValueError("prompt_tokens must contain at least one token")
+        if self.model is None:
+            raise RuntimeError("No model is available for generation")
+
+        sampler = Sampler(
+            temperature=temp,
+            top_k=self.inference_config.top_k if top_k is None else top_k,
+            top_p=self.inference_config.top_p if top_p is None else top_p,
+            repetition_penalty=self.inference_config.repetition_penalty,
+        )
+        kv_cache = (
+            KVCache(num_layers=getattr(self.model, "num_layers"))
+            if self.inference_config.use_kv_cache and hasattr(self.model, "num_layers")
+            else None
+        )
 
         # Autoregressive generation loop
         with torch.no_grad():
             for _ in range(max_tokens):
                 input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.device)
-
-                if self.model is not None and callable(self.model):
-                    try:
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[:, -1, :]  # (1, vocab_size)
-
-                        if temp > 0:
-                            probs = torch.softmax(next_token_logits / temp, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1).item()
-                        else:
-                            next_token = torch.argmax(next_token_logits, dim=-1).item()
-                    except Exception:
-                        self._failed = True
-                        next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                if kv_cache is not None:
+                    model_input = input_tensor if kv_cache.get_seq_length() == 0 else input_tensor[:, -1:]
+                    logits = self.model(model_input, kv_cache=kv_cache)
                 else:
-                    self._failed = True
-                    next_token = (tokens[-1] + 1) % self.model_config.vocab_size
+                    logits = self.model(input_tensor)
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                next_token_logits = logits[:, -1, :]
+                next_token = sampler.sample(next_token_logits, generated_tokens=tokens).item()
 
                 tokens.append(int(next_token))
 
@@ -130,15 +149,9 @@ class InferenceEngine:
         """
         End-to-end string-to-string text generation.
         """
-        self._prepare_model()
-        self._failed = False
-
         # Tokenize prompt
         if tokenizer is not None and hasattr(tokenizer, "encode"):
-            try:
-                prompt_ids = tokenizer.encode(prompt)
-            except Exception:
-                prompt_ids = [ord(c) for c in prompt]
+            prompt_ids = tokenizer.encode(prompt)
         else:
             prompt_ids = [ord(c) for c in prompt]
 
@@ -150,12 +163,6 @@ class InferenceEngine:
         )
 
         # Decode generated tokens
-        if not getattr(self, "_failed", False) and tokenizer is not None and hasattr(tokenizer, "decode"):
-            try:
-                return tokenizer.decode(output_ids)
-            except Exception:
-                pass
-
-        # Fallback decode: append dummy synthesized continuation
-        continuation = " [generated continuation tokens]"
-        return prompt + continuation
+        if tokenizer is not None and hasattr(tokenizer, "decode"):
+            return tokenizer.decode(output_ids)
+        return prompt + "".join(chr(token) for token in output_ids[len(prompt_ids):] if 0 <= token <= 0x10FFFF)

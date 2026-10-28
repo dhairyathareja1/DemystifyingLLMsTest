@@ -46,13 +46,20 @@ class RequestHandler:
                 max_new_tokens=max_tokens,
                 temperature=temperature
             )
+            if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
+                full_text = self.tokenizer.decode(generated_tokens)
+                response_text = full_text[len(prompt):] if full_text.startswith(prompt) else full_text
+            else:
+                response_text = "".join(chr(token) for token in generated_tokens[len(prompt_tokens):] if 0 <= token <= 0x10FFFF)
         elif self.engine is not None and hasattr(self.engine, "generate"):
-            raw_gen = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens)
-            generated_tokens = prompt_tokens + [101, 102]
+            full_text = self.engine.generate(prompt, tokenizer=self.tokenizer, max_new_tokens=max_tokens, temperature=temperature)
+            response_text = full_text[len(prompt):] if full_text.startswith(prompt) else full_text
+            if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
+                generated_tokens = self.tokenizer.encode(full_text)
+            else:
+                generated_tokens = [ord(char) for char in full_text]
         else:
-            generated_tokens = prompt_tokens + [prompt_tokens[-1] + 1 if prompt_tokens else 42]
-
-        response_text = generated_tokens
+            raise RuntimeError("No inference engine is configured")
 
         return {
             "id": f"cmpl-{uuid.uuid4().hex[:12]}",
@@ -69,8 +76,8 @@ class RequestHandler:
             ],
             "usage": {
                 "prompt_tokens": len(prompt_tokens),
-                "completion_tokens": len(generated_tokens) - len(prompt_tokens),
-                "total_tokens": len(generated_tokens)
+                "completion_tokens": max(0, len(generated_tokens) - len(prompt_tokens)),
+                "total_tokens": max(len(prompt_tokens), len(generated_tokens))
             }
         }
 

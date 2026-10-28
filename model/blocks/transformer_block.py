@@ -60,7 +60,8 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        kv_cache: Optional[Any] = None
+        kv_cache: Optional[Any] = None,
+        position_offset: int = 0,
     ) -> torch.Tensor:
         """
         Forward pass for transformer block.
@@ -73,8 +74,12 @@ class TransformerBlock(nn.Module):
         Returns:
             Output tensor of shape (batch_size, seq_len, d_model)
         """
-        # h = self.resid1(x, self.attn(self.ln1(x), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
-        # out = self.resid2(h, self.ffn(self.ln2(h)))
-        h = self.resid1(x, self.ffn(self.ln1(x)))
-        out = self.resid2(h, self.attn(self.ln2(h), mask=mask, kv_cache=kv_cache, layer_idx=self.layer_idx))
+        h = self.resid1(x, self.attn(
+            self.ln1(x),
+            mask=mask,
+            kv_cache=kv_cache,
+            layer_idx=self.layer_idx,
+            position_offset=position_offset,
+        ))
+        out = self.resid2(h, self.ffn(self.ln2(h)))
         return out
