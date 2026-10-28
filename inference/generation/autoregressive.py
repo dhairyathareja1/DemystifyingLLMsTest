@@ -8,7 +8,7 @@ from .stop_criteria import StopCriteria
 def autoregressive_generate(
     model: torch.nn.Module,
     input_ids: torch.Tensor,
-    max_new_tokens: int = 50,
+    max_new_tokens: int = 20,
     eos_token_id: Optional[int] = None,
     sampler_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     use_cache: bool = False,
