@@ -1,9 +1,4 @@
-"""
-Scaled Dot-Product Attention implementation.
-
-  - M1: Missing / sqrt(d_k) scaling in attention scores
-  - H5: Softmax applied along dim=-2 instead of dim=-1
-"""
+"""Scaled dot-product attention implementation."""
 
 import math
 from typing import Optional, Tuple

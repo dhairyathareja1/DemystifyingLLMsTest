@@ -43,7 +43,7 @@ class Vocabulary:
     def token_to_id(self, token: str) -> int:
         if token in self._token_to_id:
             return self._token_to_id[token]
-        return self.add_token(token)
+        return self.unk_token_id
 
     def id_to_token(self, idx: int) -> str:
         if idx in self._id_to_token:

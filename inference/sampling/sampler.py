@@ -16,6 +16,14 @@ class Sampler:
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
     ):
+        if temperature < 0:
+            raise ValueError("temperature must be non-negative")
+        if top_k < 0:
+            raise ValueError("top_k must be non-negative")
+        if not 0 <= top_p <= 1:
+            raise ValueError("top_p must be in [0, 1]")
+        if repetition_penalty <= 0:
+            raise ValueError("repetition_penalty must be positive")
         self.temperature = temperature
         self.top_k = top_k
         self.top_p = top_p
@@ -25,6 +33,7 @@ class Sampler:
         self,
         logits: torch.Tensor,
         generated_tokens: Optional[Union[List[int], torch.Tensor]] = None,
+        generator: Optional[torch.Generator] = None,
     ) -> torch.Tensor:
         """
         Sample next token from logits tensor of shape (batch_size, vocab_size) or (vocab_size,).
@@ -37,20 +46,20 @@ class Sampler:
         if self.repetition_penalty != 1.0 and generated_tokens is not None:
             logits = apply_repetition_penalty(logits, generated_tokens, penalty=self.repetition_penalty)
 
-        # 2. Top-K
-        if self.top_k > 0:
-            logits = apply_top_k(logits, k=self.top_k)
-
-        # 3. Top-P
-        if self.top_p < 1.0:
-            logits = apply_top_p(logits, p=self.top_p)
-
         if self.temperature <= 0:
             return torch.argmax(logits, dim=-1)
 
-        scaled_logits = apply_temperature(logits, temperature=self.temperature)
-        probs = F.softmax(scaled_logits, dim=-1)
+        # 2. Temperature
+        logits = apply_temperature(logits, temperature=self.temperature)
 
-        # 5. Multinomial sample
-        next_token = torch.multinomial(probs, num_samples=1)
+        # 3. Top-K
+        if self.top_k > 0:
+            logits = apply_top_k(logits, k=self.top_k)
+
+        # 4. Top-P
+        if self.top_p < 1.0:
+            logits = apply_top_p(logits, p=self.top_p)
+
+        probs = F.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1, generator=generator)
         return next_token.squeeze(-1)

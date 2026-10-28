@@ -9,6 +9,7 @@ from inference.generation.autoregressive import autoregressive_generate
 
 from config.model_config import ModelConfig
 from config.inference_config import InferenceConfig
+from config.constants import EOS_TOKEN_ID, UNK_TOKEN_ID
 from utils.logging_utils import get_logger
 
 logger = get_logger("serving_pipeline")
@@ -34,6 +35,7 @@ class ServingPipeline:
         except Exception:
             self.config = ModelConfig(d_model=768, vocab_size=50257)
         self.inference_config = inference_config or InferenceConfig()
+        self.inference_config.validate()
         self.device = torch.device(device) if device else torch.device("cpu")
 
     def process(self, text: str, max_new_tokens: Optional[int] = None) -> str:
@@ -53,7 +55,7 @@ class ServingPipeline:
         if self.tokenizer is not None and hasattr(self.tokenizer, "encode"):
             tokens = self.tokenizer.encode(text)
         else:
-            tokens = [ord(c) for c in text]
+            tokens = [ord(c) if ord(c) < self.config.vocab_size else UNK_TOKEN_ID for c in text]
 
         if not tokens:
             raise ValueError("The prompt must contain at least one token")
@@ -76,7 +78,8 @@ class ServingPipeline:
 
         input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
         max_tokens = max_new_tokens if max_new_tokens is not None else self.inference_config.max_new_tokens
-        eos_token_id = self.inference_config.stop_token_ids[0] if self.inference_config.stop_token_ids else None
+        stop_ids = self.inference_config.stop_token_ids or [EOS_TOKEN_ID]
+        eos_token_id = stop_ids[0]
         with torch.no_grad():
             output_ids = autoregressive_generate(
                 self.model,
